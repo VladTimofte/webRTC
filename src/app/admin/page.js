@@ -236,19 +236,41 @@ export default function AdminPage() {
 
   useEffect(() => {
     setUiAuthed(false);
-    setEmail(localStorage.getItem(LS_EMAIL) || "admin@local.test");
-    setPass(localStorage.getItem(LS_PASS) || "admin@local.test");
+
+    // Autocomplete DOAR dacă există deja în localStorage
+    const savedEmail = localStorage.getItem(LS_EMAIL);
+    const savedPass = localStorage.getItem(LS_PASS);
+
+    if (savedEmail) setEmail(savedEmail);
+    if (savedPass) setPass(savedPass);
+
+    // Dacă nu există în LS, rămân goale (userul trebuie să știe credențialele)
   }, []);
 
   async function login() {
     setAuthError("");
+
+    const e = (email || "").trim();
+    const p = pass || "";
+
+    if (!e || !p) {
+      setAuthError("Te rog completează email și parolă.");
+      setUiAuthed(false);
+      return;
+    }
+
     try {
-      localStorage.setItem(LS_EMAIL, email);
-      localStorage.setItem(LS_PASS, pass);
-      await signInWithEmailAndPassword(getAuth(), email, pass);
+      // IMPORTANT: NU salvăm nimic înainte de a confirma login-ul
+      await signInWithEmailAndPassword(getAuth(), e, p);
+
+      // DOAR după succes salvăm pentru autocomplete data viitoare
+      localStorage.setItem(LS_EMAIL, e);
+      localStorage.setItem(LS_PASS, p);
+
       setUiAuthed(true);
-    } catch (e) {
-      setAuthError(e?.message || "Autentificare eșuată.");
+    } catch (err) {
+      // NU scriem nimic în LS la fail
+      setAuthError("Email sau parolă greșite.");
       setUiAuthed(false);
     }
   }
