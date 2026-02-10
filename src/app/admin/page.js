@@ -6,8 +6,9 @@ import { db } from "../../lib/firebase";
 import { AdminWebRTCBroadcastManager } from "../../lib/webrtc/adminManager";
 import { getAuth, signInWithEmailAndPassword, signOut } from "firebase/auth";
 
-const LS_EMAIL = "geneza_admin_email";
-const LS_PASS = "geneza_admin_pass";
+const LS_EMAIL_KEY = "geneza_admin_email";
+const LS_PASS_KEY = "geneza_admin_pass";
+const DEFAULT_MAX_BITRATE_KBPS = 32;
 
 function clamp01(x) {
   if (!Number.isFinite(x)) return 0;
@@ -185,7 +186,7 @@ function Shell({ children }) {
         padding: 18,
       }}
     >
-      <div style={{ width: "100%", maxWidth: 980 }}>
+      <div style={{ width: "100%", maxWidth: 1200 }}>
         <div
           style={{
             borderRadius: 22,
@@ -217,7 +218,6 @@ export default function AdminPage() {
   const [deviceId, setDeviceId] = useState("");
 
   const [status, setStatus] = useState("idle");
-  const [broadcastSessionId, setBroadcastSessionId] = useState("");
   const [broadcastMuted, setBroadcastMuted] = useState(false);
   const [broadcastVolume, setBroadcastVolume] = useState(1);
 
@@ -234,14 +234,16 @@ export default function AdminPage() {
   const [resetArmed, setResetArmed] = useState(false);
   const resetTimerRef = useRef(null);
 
-  const [maxBitrateKbps, setMaxBitrateKbps] = useState(null);
+  const [maxBitrateKbps, setMaxBitrateKbps] = useState(
+    DEFAULT_MAX_BITRATE_KBPS,
+  );
 
   useEffect(() => {
     setUiAuthed(false);
 
     // Autocomplete DOAR dacă există deja în localStorage
-    const savedEmail = localStorage.getItem(LS_EMAIL);
-    const savedPass = localStorage.getItem(LS_PASS);
+    const savedEmail = localStorage.getItem(LS_EMAIL_KEY);
+    const savedPass = localStorage.getItem(LS_PASS_KEY);
 
     if (savedEmail) setEmail(savedEmail);
     if (savedPass) setPass(savedPass);
@@ -305,8 +307,8 @@ export default function AdminPage() {
         return;
       }
 
-      localStorage.setItem(LS_EMAIL, e);
-      localStorage.setItem(LS_PASS, p);
+      localStorage.setItem(LS_EMAIL_KEY, e);
+      localStorage.setItem(LS_PASS_KEY, p);
 
       setUiAuthed(true);
     } catch (err) {
@@ -385,12 +387,17 @@ export default function AdminPage() {
     const u1 = onValue(ref(db, "broadcast"), (snap) => {
       const b = snap.val() || {};
       setStatus(b.status || "idle");
-      setBroadcastSessionId(b.sessionId || "");
       setBroadcastMuted(!!b.muted);
       setBroadcastVolume(Number.isFinite(b.volume) ? b.volume : 1);
-      setMaxBitrateKbps(
-        Number.isFinite(b.maxBitrateKbps) ? b.maxBitrateKbps : null,
-      );
+      const v = Number.isFinite(b.maxBitrateKbps)
+        ? b.maxBitrateKbps
+        : DEFAULT_MAX_BITRATE_KBPS;
+      setMaxBitrateKbps(v);
+      if (!Number.isFinite(b.maxBitrateKbps)) {
+        update(ref(db, "broadcast"), {
+          maxBitrateKbps: DEFAULT_MAX_BITRATE_KBPS,
+        }).catch(() => {});
+      }
     });
 
     const u2 = onValue(ref(db, "listeners"), (snap) => {
@@ -728,9 +735,6 @@ export default function AdminPage() {
             <div style={{ fontSize: 26, fontWeight: 900, marginTop: 4 }}>
               {title}
             </div>
-            <div style={{ opacity: 0.7, fontSize: 12, marginTop: 6 }}>
-              Email: {email}
-            </div>
           </div>
 
           <div
@@ -804,7 +808,7 @@ export default function AdminPage() {
         }}
       >
         {/* Left */}
-        <div style={{ display: "grid", gap: 14 }}>
+        <div style={{ display: "grid", gap: 12 }}>
           {/* Controls */}
           <div
             style={{
@@ -813,13 +817,21 @@ export default function AdminPage() {
               padding: 16,
             }}
           >
-            <div style={{ fontWeight: 900, fontSize: 16, marginBottom: 10 }}>
+            <div style={{ fontWeight: 900, fontSize: 16 }}>
               Control Transmisiune
             </div>
+            <br />
 
             <div style={{ marginBottom: 10 }}>
-              <div style={{ opacity: 0.75, fontSize: 12, marginBottom: 6 }}>
-                Sursă audio (intrare):
+              <div
+                style={{
+                  opacity: 0.8,
+                  fontSize: 12,
+                  marginBottom: 6,
+                  marginTop: 6,
+                }}
+              >
+                <div style={{ fontWeight: 600 }}>Sursă audio (intrare):</div>
               </div>
               <select
                 style={{
@@ -848,13 +860,22 @@ export default function AdminPage() {
                 style={{
                   display: "flex",
                   justifyContent: "space-between",
-                  marginBottom: 8,
                   opacity: 0.9,
                 }}
               >
-                <div style={{ fontWeight: 800 }}>Max bitrate (audio)</div>
+                <div
+                  style={{
+                    opacity: 0.8,
+                    fontSize: 12,
+                    marginBottom: 6,
+                    marginTop: 6,
+                  }}
+                >
+                  <div style={{ fontWeight: 600 }}>Max bitrate audio</div>
+                </div>
+
                 <div style={{ fontVariantNumeric: "tabular-nums" }}>
-                  {maxBitrateKbps ? `${maxBitrateKbps} kbps` : "Auto"}
+                  {maxBitrateKbps ? `${maxBitrateKbps} kbps` : "Max"}
                 </div>
               </div>
 
@@ -872,20 +893,15 @@ export default function AdminPage() {
                   color: "white",
                 }}
               >
-                <option value={0}>Auto (fără limită)</option>
-                <option value={16}>16 kbps (foarte low)</option>
+                <option value={16}>16 kbps (Low - Safe)</option>
                 <option value={24}>24 kbps</option>
-                <option value={32}>32 kbps</option>
+                <option value={32}>32 kbps (Recomand)</option>
                 <option value={48}>48 kbps</option>
-                <option value={64}>64 kbps (ok)</option>
-                <option value={96}>96 kbps (foarte ok)</option>
-                <option value={128}>128 kbps (hi)</option>
+                <option value={64}>64 kbps</option>
+                <option value={96}>96 kbps</option>
+                <option value={128}>128 kbps</option>
+                <option value={0}>Max Posibil (Nu recomand)</option>
               </select>
-
-              <div style={{ marginTop: 6, opacity: 0.7, fontSize: 12 }}>
-                Se aplică live (fără restart) pe conexiunile existente, unde
-                browserul suportă.
-              </div>
             </div>
 
             {/* Volume slider */}
@@ -894,11 +910,20 @@ export default function AdminPage() {
                 style={{
                   display: "flex",
                   justifyContent: "space-between",
-                  marginBottom: 8,
                   opacity: 0.9,
                 }}
               >
-                <div style={{ fontWeight: 800 }}>Volum transmis</div>
+                <div
+                  style={{
+                    opacity: 0.8,
+                    fontSize: 12,
+                    marginBottom: 6,
+                    marginTop: 6,
+                  }}
+                >
+                  <div style={{ fontWeight: 600 }}>Volum transmis</div>
+                </div>
+
                 <div style={{ fontVariantNumeric: "tabular-nums" }}>
                   {Math.round(broadcastVolume * 100)}%
                 </div>
@@ -912,24 +937,23 @@ export default function AdminPage() {
                 onChange={(e) => onVolumeChange(parseFloat(e.target.value))}
                 style={{ width: "100%" }}
               />
-              <div style={{ marginTop: 6, opacity: 0.7, fontSize: 12 }}>
-                Ajustează nivelul trimis către toate device-urile.
-              </div>
             </div>
 
             <div
               style={{
                 display: "flex",
-                gap: 10,
+                gap: 14,
                 flexWrap: "wrap",
                 marginTop: 14,
+                justifyContent: "center",
+                alignItems: "center",
               }}
             >
               <button
                 onClick={start}
                 disabled={isLive}
                 style={{
-                  flex: "1 1 160px",
+                  flex: "0 0 160px",
                   padding: 12,
                   borderRadius: 14,
                   border: "1px solid rgba(255,255,255,0.14)",
@@ -947,7 +971,7 @@ export default function AdminPage() {
               <button
                 onClick={stop}
                 style={{
-                  flex: "1 1 160px",
+                  flex: "0 0 160px",
                   padding: 12,
                   borderRadius: 14,
                   border: "1px solid rgba(255,255,255,0.14)",
@@ -964,7 +988,7 @@ export default function AdminPage() {
                 onClick={muteToggle}
                 disabled={!isLive}
                 style={{
-                  flex: "1 1 160px",
+                  flex: "0 0 160px",
                   padding: 12,
                   borderRadius: 14,
                   border: "1px solid rgba(255,255,255,0.14)",
@@ -989,6 +1013,7 @@ export default function AdminPage() {
                 display: "flex",
                 gap: 10,
                 alignItems: "center",
+                justifyContent: "center",
                 flexWrap: "wrap",
               }}
             >
@@ -1004,23 +1029,33 @@ export default function AdminPage() {
                   color: "white",
                   fontWeight: 900,
                   cursor: "pointer",
+                  whiteSpace: "pre-line",
                 }}
               >
-                {resetArmed
-                  ? "Confirmă RESET DB (încă o dată)"
-                  : "Resetare Totală DB"}
+                {resetArmed ? (
+                  <span>Confirmă RESET DB (încă o dată)</span>
+                ) : (
+                  <>
+                    <span>Resetare Totală DB</span>
+                    <br />
+                    <span
+                      style={{
+                        opacity: 0.7,
+                        fontSize: 12,
+                        fontWeight: 400,
+                        fontStyle: "italic",
+                      }}
+                    >
+                      Șterge toata baza de date - INDICAT inainte de fiecare
+                      live
+                    </span>
+                  </>
+                )}
               </button>
               <div style={{ opacity: 0.7, fontSize: 12 }}>
                 Șterge <b>tot</b> (broadcast, listeners, offers, candidates).
                 Confirmare 2 click-uri (5 secunde).
               </div>
-            </div>
-
-            <div style={{ marginTop: 14, opacity: 0.75, fontSize: 12 }}>
-              Sesiune:{" "}
-              <span style={{ fontVariantNumeric: "tabular-nums" }}>
-                {broadcastSessionId || "—"}
-              </span>
             </div>
           </div>
 
@@ -1038,12 +1073,12 @@ export default function AdminPage() {
             <div style={{ display: "grid", gap: 14 }}>
               <Meter
                 value={inputLevel}
-                label="Intrare (mereu activă)"
-                sublabel="Nivel semnal din device-ul selectat (chiar și idle/pauză)"
+                label="Input"
+                sublabel="Nivel semnal din device-ul selectat"
               />
               <Meter
                 value={outLevel}
-                label="Ieșire (broadcast, post-volum)"
+                label="Output"
                 sublabel="Nivel real trimis către listeners (după slider / mute)"
               />
             </div>
@@ -1051,7 +1086,14 @@ export default function AdminPage() {
         </div>
 
         {/* Right */}
-        <div style={{ display: "grid", gap: 14 }}>
+        <div
+          style={{
+            display: "grid",
+            gap: 14,
+            gridTemplateRows: "auto 1fr",
+            alignContent: "start",
+          }}
+        >
           {/* Network */}
           <div
             style={{
@@ -1061,7 +1103,7 @@ export default function AdminPage() {
             }}
           >
             <div style={{ fontWeight: 900, fontSize: 16, marginBottom: 10 }}>
-              Rețea (Admin)
+              Rețea
             </div>
             <div
               style={{ display: "grid", gap: 6, fontSize: 13, opacity: 0.9 }}
@@ -1079,9 +1121,6 @@ export default function AdminPage() {
                 Downlink:{" "}
                 <b>{network.downlink ? `${network.downlink} Mbps` : "—"}</b>
               </div>
-              <div style={{ opacity: 0.7, fontSize: 12 }}>
-                (SSID Wi-Fi nu poate fi citit din browser.)
-              </div>
             </div>
           </div>
 
@@ -1091,12 +1130,24 @@ export default function AdminPage() {
               borderRadius: 18,
               border: "1px solid rgba(255,255,255,0.10)",
               padding: 16,
+              display: "flex",
+              flexDirection: "column",
+              minHeight: 0,
             }}
           >
             <div style={{ fontWeight: 900, fontSize: 16, marginBottom: 10 }}>
-              Ascultători (detaliu)
+              Ascultători
             </div>
-            <div style={{ display: "grid", gap: 8 }}>
+            <div
+              style={{
+                display: "grid",
+                gap: 8,
+                overflowY: "auto",
+                minHeight: 0,
+                maxHeight: 420,
+                paddingRight: 6,
+              }}
+            >
               {listeners.length === 0 ? (
                 <div style={{ opacity: 0.75, fontSize: 13 }}>
                   Niciun ascultător încă.
