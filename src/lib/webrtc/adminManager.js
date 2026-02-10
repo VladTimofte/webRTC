@@ -42,6 +42,50 @@ export class AdminWebRTCBroadcastManager {
     this._volume = 1.0;
     this._muted = false;
     this._broadcastStarted = false;
+
+    // bitrate cap (kbps). null = unlimited/default
+    this._maxBitrateKbps = null;
+  }
+
+  setMaxBitrateKbps(kbps) {
+    // kbps: remind: 0/null => unlimited
+    const n = Number(kbps);
+    const next =
+      !Number.isFinite(n) || n <= 0
+        ? null
+        : Math.max(6, Math.min(320, Math.round(n)));
+
+    this._maxBitrateKbps = next;
+
+    // persist in DB (so UI reflects it + late-joiners inherit it)
+    update(ref(db, "broadcast"), { maxBitrateKbps: next }).catch(() => {});
+
+    // apply live to ALL existing peer connections
+    for (const pc of this.peerConnections.values()) {
+      this._applyMaxBitrateToPc(pc);
+    }
+  }
+
+  _applyMaxBitrateToPc(pc) {
+    const maxBps = this._maxBitrateKbps ? this._maxBitrateKbps * 1000 : null;
+
+    pc.getSenders().forEach((sender) => {
+      const track = sender.track;
+      if (!track || track.kind !== "audio") return;
+
+      try {
+        const p = sender.getParameters();
+        p.encodings = p.encodings || [{}];
+
+        // maxBitrate is in bits/second
+        if (maxBps) p.encodings[0].maxBitrate = maxBps;
+        else delete p.encodings[0].maxBitrate;
+
+        sender.setParameters(p).catch(() => {});
+      } catch {
+        // ignore
+      }
+    });
   }
 
   getPeerConnections() {
@@ -86,13 +130,13 @@ export class AdminWebRTCBroadcastManager {
 
     this.sessionId = crypto.randomUUID();
 
-    // Mark broadcast live (keep volume/muted consistent)
     await update(ref(db, "broadcast"), {
       status: "live",
       sessionId: this.sessionId,
       adminOnline: true,
       volume: this._volume,
       muted: this._muted,
+      maxBitrateKbps: this._maxBitrateKbps ?? null,
     });
 
     await this._setupOutgoingPipelineFromPreview();
@@ -295,13 +339,21 @@ export class AdminWebRTCBroadcastManager {
     });
     this.peerConnections.set(listenerId, pc);
 
-    // add outgoing track + best-effort low-latency tuning
     this.audioStream.getTracks().forEach((t) => {
       const sender = pc.addTrack(t, this.audioStream);
+
       try {
         const p = sender.getParameters();
         p.degradationPreference = "maintain-framerate";
         p.encodings = p.encodings || [{}];
+
+        // apply bitrate cap if set
+        if (this._maxBitrateKbps) {
+          p.encodings[0].maxBitrate = this._maxBitrateKbps * 1000;
+        } else {
+          delete p.encodings[0].maxBitrate;
+        }
+
         sender.setParameters(p).catch(() => {});
       } catch {}
     });

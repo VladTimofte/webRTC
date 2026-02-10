@@ -234,6 +234,8 @@ export default function AdminPage() {
   const [resetArmed, setResetArmed] = useState(false);
   const resetTimerRef = useRef(null);
 
+  const [maxBitrateKbps, setMaxBitrateKbps] = useState(null);
+
   useEffect(() => {
     setUiAuthed(false);
 
@@ -246,6 +248,35 @@ export default function AdminPage() {
 
     // Dacă nu există în LS, rămân goale (userul trebuie să știe credențialele)
   }, []);
+
+  useEffect(() => {
+    if (!uiAuthed) return;
+
+    (async () => {
+      const list = await navigator.mediaDevices.enumerateDevices();
+      const mics = list.filter((d) => d.kind === "audioinput");
+      setDevices(mics);
+
+      setDeviceId((prev) => prev || (mics[0]?.deviceId ?? ""));
+    })();
+  }, [uiAuthed]);
+
+  async function requestMicPermissionOnce() {
+    // cere permisiunea într-un user gesture (apelată din click login)
+    const s = await navigator.mediaDevices.getUserMedia({
+      audio: {
+        echoCancellation: false,
+        noiseSuppression: false,
+        autoGainControl: false,
+        channelCount: 1,
+        sampleRate: 48000,
+      },
+      video: false,
+    });
+
+    // nu vrem să “ținem” microfonul aici; doar declanșăm permisiunea
+    s.getTracks().forEach((t) => t.stop());
+  }
 
   async function login() {
     setAuthError("");
@@ -260,16 +291,25 @@ export default function AdminPage() {
     }
 
     try {
-      // IMPORTANT: NU salvăm nimic înainte de a confirma login-ul
       await signInWithEmailAndPassword(getAuth(), e, p);
 
-      // DOAR după succes salvăm pentru autocomplete data viitoare
+      // ✅ cere permisiunea pentru microfon ACUM (în context de click)
+      try {
+        await requestMicPermissionOnce();
+      } catch (err) {
+        // dacă userul dă deny, poți afișa un mesaj clar
+        setAuthError(
+          "Permisiunea pentru microfon a fost refuzată. Te rog permite accesul și reîncearcă.",
+        );
+        setUiAuthed(false);
+        return;
+      }
+
       localStorage.setItem(LS_EMAIL, e);
       localStorage.setItem(LS_PASS, p);
 
       setUiAuthed(true);
     } catch (err) {
-      // NU scriem nimic în LS la fail
       setAuthError("Email sau parolă greșite.");
       setUiAuthed(false);
     }
@@ -348,6 +388,9 @@ export default function AdminPage() {
       setBroadcastSessionId(b.sessionId || "");
       setBroadcastMuted(!!b.muted);
       setBroadcastVolume(Number.isFinite(b.volume) ? b.volume : 1);
+      setMaxBitrateKbps(
+        Number.isFinite(b.maxBitrateKbps) ? b.maxBitrateKbps : null,
+      );
     });
 
     const u2 = onValue(ref(db, "listeners"), (snap) => {
@@ -404,6 +447,26 @@ export default function AdminPage() {
     };
   }, [uiAuthed]);
 
+  function onMaxBitrateChange(nextKbps) {
+    const n = Number(nextKbps);
+    const v =
+      !Number.isFinite(n) || n <= 0
+        ? null
+        : Math.max(6, Math.min(320, Math.round(n)));
+
+    setMaxBitrateKbps(v);
+
+    const mgr = mgrRef.current;
+
+    // if broadcasting, apply live to existing connections
+    if (mgr?.isBroadcasting && mgr.setMaxBitrateKbps) {
+      mgr.setMaxBitrateKbps(v);
+    } else {
+      // otherwise just persist for when broadcast starts
+      update(ref(db, "broadcast"), { maxBitrateKbps: v }).catch(() => {});
+    }
+  }
+
   async function forceResetDBSoft() {
     await update(ref(db, "broadcast"), {
       status: "idle",
@@ -425,6 +488,7 @@ export default function AdminPage() {
     await mgrRef.current.initPreview();
 
     await mgrRef.current.start();
+    mgrRef.current.setMaxBitrateKbps?.(maxBitrateKbps);
     mgrRef.current.setVolume(broadcastVolume);
     if (broadcastMuted) mgrRef.current.pause();
 
@@ -776,6 +840,52 @@ export default function AdminPage() {
                   </option>
                 ))}
               </select>
+            </div>
+
+            {/* Max bitrate */}
+            <div style={{ marginTop: 14 }}>
+              <div
+                style={{
+                  display: "flex",
+                  justifyContent: "space-between",
+                  marginBottom: 8,
+                  opacity: 0.9,
+                }}
+              >
+                <div style={{ fontWeight: 800 }}>Max bitrate (audio)</div>
+                <div style={{ fontVariantNumeric: "tabular-nums" }}>
+                  {maxBitrateKbps ? `${maxBitrateKbps} kbps` : "Auto"}
+                </div>
+              </div>
+
+              <select
+                value={maxBitrateKbps ?? 0}
+                onChange={(e) =>
+                  onMaxBitrateChange(parseInt(e.target.value, 10))
+                }
+                style={{
+                  width: "100%",
+                  padding: 12,
+                  borderRadius: 12,
+                  border: "1px solid rgba(255,255,255,0.14)",
+                  background: "rgba(0,0,0,0.25)",
+                  color: "white",
+                }}
+              >
+                <option value={0}>Auto (fără limită)</option>
+                <option value={16}>16 kbps (foarte low)</option>
+                <option value={24}>24 kbps</option>
+                <option value={32}>32 kbps</option>
+                <option value={48}>48 kbps</option>
+                <option value={64}>64 kbps (ok)</option>
+                <option value={96}>96 kbps (foarte ok)</option>
+                <option value={128}>128 kbps (hi)</option>
+              </select>
+
+              <div style={{ marginTop: 6, opacity: 0.7, fontSize: 12 }}>
+                Se aplică live (fără restart) pe conexiunile existente, unde
+                browserul suportă.
+              </div>
             </div>
 
             {/* Volume slider */}
